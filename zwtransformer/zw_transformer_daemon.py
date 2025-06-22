@@ -1,1 +1,533 @@
-~�&
+import sys
+import os
+import datetime
+import json
+import yaml
+import uvicorn
+import logging
+import requests
+from typing import List, Dict, Any, Optional
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import subprocess
+import tempfile
+
+# === CONFIGURATION ===
+
+DEFAULT_BLENDER_EXEC = "/home/tran/Downloads/blender-4.4.3-linux-x64/blender"
+BLENDER_HELPER_SCRIPT_NAME = "backend/blender_scripts/blender_zw_processor.py"
+
+# === LOGGING ===
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("zw_transformer_daemon")
+
+# === APP INITIALIZATION ===
+
+app = FastAPI(title="ZW Transformer Multi-Engine Daemon", version="2.0.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# === BLENDER ADAPTER FOR DAEMON ===
+
+class BlenderAdapterDaemon:
+    def __init__(self, blender_path='blender'):
+        self.name = "blender"
+        self.version = "daemon-bridge"
+        self.capabilities = ["mesh", "scene", "material", "light", "camera"]
+        self.status = "active"
+        self.blender_path = blender_path
+
+    def get_status(self):
+        return {
+            "name": self.name,
+            "version": self.version,
+            "capabilities": self.capabilities,
+            "status": self.status
+        }
+
+    def process_scene(self, scene_data):
+        zw_string = yaml.dump({"ZW-SCENE": scene_data})
+        return self._run_blender_script(zw_string)
+
+    def _run_blender_script(self, zw_data):
+        with tempfile.NamedTemporaryFile('w', suffix='.zw', delete=False) as zw_file:
+            zw_file.write(zw_data)
+            zw_path = zw_file.name
+
+        output_path = zw_path + ".json"
+
+        try:
+            result = subprocess.run([
+                self.blender_path,
+                "--background",
+                "--python", BLENDER_HELPER_SCRIPT_NAME,
+                "--", zw_path, output_path
+            ], capture_output=True, text=True, timeout=60)
+
+            stdout, stderr = result.stdout, result.stderr
+            return_code = result.returncode
+
+            blender_results = []
+            if os.path.exists(output_path):
+                with open(output_path) as f:
+                    blender_results = json.load(f)
+
+            return {
+                "status": "success" if return_code == 0 else "error",
+                "return_code": return_code,
+                "stdout": stdout,
+                "stderr": stderr,
+                "blender_results": blender_results,
+                "temp_input": zw_path,
+                "temp_output": output_path
+            }
+        except subprocess.TimeoutExpired:
+            return {"status": "error", "message": "Timeout while running Blender"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+# === ENGINE ROUTER ===
+
+class MultiEngineRouter:
+    def __init__(self):
+        self.adapters = {}
+        self.default_engine = None
+
+    def register_adapter(self, adapter, is_default=False):
+        name = adapter.name.lower()
+        self.adapters[name] = adapter
+        if is_default or self.default_engine is None:
+            self.default_engine = name
+
+    def route_zw_packet(self, zw_data, parsed_zw, target_engines=None, **kwargs):
+        if not target_engines:
+            target_engines = [self.default_engine]
+        results = {}
+        for engine_name in target_engines:
+            adapter = self.adapters.get(engine_name)
+            if not adapter:
+                results[engine_name] = {"status": "error", "message": f"Adapter '{engine_name}' not found"}
+                continue
+            result = adapter.process_scene(parsed_zw)
+            results[engine_name] = result
+        return results
+
+    def get_router_status(self):
+        return {
+            "registered_engines": len(self.adapters),
+            "default_engine": self.default_engine,
+            "engines": {name: adapter.get_status() for name, adapter in self.adapters.items()},
+            "total_capabilities": sum(len(adapter.capabilities) for adapter in self.adapters.values())
+        }
+
+    def get_all_capabilities(self):
+        return {name: adapter.capabilities for name, adapter in self.adapters.items()}
+
+# === INIT ROUTER ===
+
+engine_router = MultiEngineRouter()
+blender_adapter = BlenderAdapterDaemon(blender_path=DEFAULT_BLENDER_EXEC)
+engine_router.register_adapter(blender_adapter, is_default=True)
+
+# === MODELS ===
+
+class ZWRequest(BaseModel):
+    zw_data: str
+    route_to_blender: bool = False
+    blender_path: str | None = None
+    target_engines: list[str] | None = None
+
+# === OLLAMA PROMPT HELPERS ===
+
+def build_narrative_focus_prompt(scenario: str, project_templates: List[Dict] = None) -> str:
+    """Build prompt for narrative-focused ZW generation"""
+    prompt = f"""You are an expert in narrative design and game development, specializing in the ZW (Ziegelwagga) consciousness pattern language.
+
+The user wants to generate a ZW packet for the following scenario:
+"{scenario}"
+
+Your primary goal is to structure this scenario into a ZW-NARRATIVE-SCENE packet. This format is designed for cinematic game scripting, AI story management, and emotional choreography.
+
+Key elements to include in ZW-NARRATIVE-SCENE:
+
+1. SCENE_GOAL: A concise summary of the scene's narrative purpose.
+2. EVENT_ID: A unique identifier for this event or scene.
+3. FOCUS: Boolean (true) to mark critical narrative beats.
+4. SETTING: Section for LOCATION, TIME_OF_DAY, MOOD.
+5. CHARACTERS_INVOLVED: List of characters with NAME, ROLE, CURRENT_EMOTION.
+6. SEQUENCE: A list of events, dialogues, actions in order. Each item should have a TYPE (DIALOGUE, ACTION, EVENT, OBSERVATION, EMOTIONAL_BEAT).
+7. META: Production metadata including AUTHOR, VERSION, SCENE_REFERENCE, TAGS.
+
+"""
+
+    if project_templates:
+        prompt += "\nAvailable project templates:\n"
+        for template in project_templates:
+            prompt += f"\nSchema: {template.get('name', 'Unknown')}\n{template.get('definition', '')}\n---\n"
+
+    prompt += """
+Example structure:
+ZW-NARRATIVE-SCENE:
+  SCENE_GOAL: "Introduce protagonists and establish threat"
+  EVENT_ID: "CH1_SC01_Intro"
+  FOCUS: true
+  SETTING:
+    LOCATION: "Old Observatory - Control Room"
+    TIME_OF_DAY: "Night, Stormy"
+    MOOD: "Suspenseful, Foreboding"
+  CHARACTERS_INVOLVED:
+    - NAME: "Keen"
+      ROLE: "Protagonist, Scientist"
+      CURRENT_EMOTION: "Anxious"
+  SEQUENCE:
+    - TYPE: EVENT
+      DESCRIPTION: "The ground trembles. Red emergency lights flash."
+      ANCHOR: "TremorStart"
+    - TYPE: DIALOGUE
+      ACTOR: "Keen"
+      DIALOGUE_ID: "Keen_Reaction_001"
+      CONTENT: "What was that? Main power is offline!"
+      EMOTION_TAG: "Startled"
+      FOCUS: true
+  META:
+    AUTHOR: "ZW Transformer"
+    VERSION: "1.0"
+    TAGS: ["mystery", "tech_failure"]
+
+Generate ONLY the ZW packet. Do not include explanatory text before or after.
+"""
+    return prompt
+
+def build_general_zw_prompt(scenario: str, project_templates: List[Dict] = None) -> str:
+    """Build prompt for general ZW generation"""
+    prompt = f"""You are an expert in the ZW (Ziegelwagga) consciousness pattern language.
+
+Convert the following natural language scenario into a well-formed ZW packet:
+"{scenario}"
+
+"""
+
+    if project_templates:
+        prompt += "Available project templates (use if they fit the scenario):\n"
+        for template in project_templates:
+            prompt += f"\nSchema: {template.get('name', 'Unknown')}\n{template.get('definition', '')}\n---\n"
+    else:
+        prompt += """No specific project templates available. Generate a ZW packet with an appropriate root type like:
+ZW-INFERRED-DATA:
+  [relevant fields based on scenario]
+
+"""
+
+    prompt += """The ZW packet should be well-formed with proper indentation and structure.
+Generate ONLY the ZW packet without explanatory text.
+"""
+    return prompt
+
+def build_refinement_prompt(current_zw: str, refinement_suggestion: str) -> str:
+    """Build prompt for refining existing ZW content"""
+    return f"""You are an expert in the ZW (Ziegelwagga) consciousness pattern language.
+
+The user has a ZW packet and wants to refine it based on their suggestion.
+
+Original ZW Packet:
+{current_zw}
+
+User's Refinement Suggestion: "{refinement_suggestion}"
+
+Please apply the suggestion and return the refined ZW packet.
+Ensure the refined packet maintains proper ZW structure and formatting.
+Generate ONLY the refined ZW packet without explanatory text.
+"""
+
+# === ROUTES ===
+
+@app.post("/process_zw")
+async def process_zw(req: ZWRequest):
+    logger.info("[ZW PROCESS] Processing new ZW packet")
+    logger.info("Route to Blender: %s", req.route_to_blender)
+    try:
+        cleaned_zw = req.zw_data.strip()
+        if cleaned_zw.startswith("```yaml"):
+            cleaned_zw = cleaned_zw.replace("```yaml", "").replace("```", "").strip()
+
+        parsed_zw = yaml.safe_load(cleaned_zw)
+
+        result = engine_router.route_zw_packet(
+            zw_data=req.zw_data,
+            parsed_zw=parsed_zw,
+            target_engines=req.target_engines,
+            blender_path=req.blender_path
+        )
+
+        return JSONResponse(content={
+            "status": "processed",
+            "results": result,
+            "received_length": len(req.zw_data),
+            "parsed_sections": list(parsed_zw.keys()) if isinstance(parsed_zw, dict) else [],
+            "timestamp": str(datetime.datetime.now())
+        })
+
+    except Exception as e:
+        logger.exception("Error during ZW processing")
+        return JSONResponse(content={
+            "status": "error",
+            "message": str(e)
+        }, status_code=500)
+
+@app.get("/engines")
+async def get_engines():
+    """Get information about available engines"""
+    logger.info("[ENGINES] Engine status requested")
+    router_status = engine_router.get_router_status()
+    capabilities = engine_router.get_all_capabilities()
+    return JSONResponse(content={
+        "router_status": router_status,
+        "capabilities": capabilities,
+        "timestamp": str(datetime.datetime.now())
+    })
+
+@app.get("/asset_source_statuses")
+async def asset_statuses():
+    """Get asset source status information"""
+    logger.info("[ASSET STATUS] Requested asset service status")
+    status = {
+        "services": {
+            "polyhaven": {
+                "enabled": True,
+                "message": "Polyhaven asset service is available.",
+                "api_version": "1.0.3"
+            },
+            "sketchfab": {
+                "enabled": False,
+                "message": "Sketchfab integration disabled in dev mode.",
+                "last_sync": "2025-06-20T14:00:00Z"
+            },
+            "internalLibrary": {
+                "enabled": True,
+                "message": "Internal asset library is accessible.",
+                "entries": 142
+            }
+        },
+        "timestamp": str(datetime.datetime.now()),
+        "multi_engine_router": engine_router.get_router_status()
+    }
+    return JSONResponse(content=status)
+
+# === NEW OLLAMA ROUTES ===
+
+@app.get("/ollama/models")
+async def get_available_ollama_models():
+    """Get list of available Ollama models"""
+    logger.info("[OLLAMA] Fetching available models")
+    try:
+        response = requests.get("http://localhost:11434/api/tags", timeout=5)
+        if response.status_code == 200:
+            models_data = response.json()
+            models = [model["name"] for model in models_data.get("models", [])]
+            logger.info(f"[OLLAMA] Found {len(models)} models: {models}")
+            return JSONResponse(content={
+                "status": "success",
+                "models": models,
+                "count": len(models),
+                "timestamp": str(datetime.datetime.now())
+            })
+        else:
+            logger.error(f"[OLLAMA] Error fetching models: {response.status_code}")
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "error",
+                    "message": f"Ollama API returned status {response.status_code}",
+                    "models": [],
+                    "timestamp": str(datetime.datetime.now())
+                }
+            )
+    except requests.exceptions.RequestException as e:
+        logger.error(f"[OLLAMA] Connection error: {e}")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error", 
+                "message": f"Cannot connect to Ollama at localhost:11434. Is Ollama running? Error: {str(e)}",
+                "models": [],
+                "timestamp": str(datetime.datetime.now())
+            }
+        )
+
+@app.post("/ollama/generate")
+async def generate_with_ollama(request: Request):
+    """Generate ZW content using Ollama"""
+    try:
+        body = await request.json()
+        model = body.get("model", "llama3.1:8b")
+        prompt = body.get("prompt", "")
+        scenario = body.get("scenario", "")
+        narrative_focus = body.get("narrative_focus", True)
+        project_templates = body.get("project_templates", [])
+        
+        logger.info(f"[OLLAMA] Generating ZW with model: {model}")
+        
+        if not prompt and scenario:
+            # Build prompt based on scenario and settings
+            if narrative_focus:
+                prompt = build_narrative_focus_prompt(scenario, project_templates)
+            else:
+                prompt = build_general_zw_prompt(scenario, project_templates)
+        
+        # Make request to Ollama
+        ollama_request = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "num_predict": 2048
+            }
+        }
+        
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json=ollama_request,
+            timeout=120  # Ollama can be slow, especially for large models
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            generated_text = result.get("response", "").strip()
+            
+            logger.info(f"[OLLAMA] Generated {len(generated_text)} characters")
+            
+            return JSONResponse(content={
+                "status": "success",
+                "generated_zw": generated_text,
+                "model_used": model,
+                "prompt_length": len(prompt),
+                "timestamp": str(datetime.datetime.now())
+            })
+        else:
+            logger.error(f"[OLLAMA] Generation failed: {response.status_code}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "status": "error",
+                    "message": f"Ollama generation failed with status {response.status_code}",
+                    "generated_zw": "",
+                    "timestamp": str(datetime.datetime.now())
+                }
+            )
+            
+    except Exception as e:
+        logger.error(f"[OLLAMA] Error during generation: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": f"Error during ZW generation: {str(e)}",
+                "generated_zw": "",
+                "timestamp": str(datetime.datetime.now())
+            }
+        )
+
+@app.post("/ollama/refine")
+async def refine_with_ollama(request: Request):
+    """Refine ZW content using Ollama"""
+    try:
+        body = await request.json()
+        model = body.get("model", "llama3.1:8b")
+        current_zw = body.get("current_zw", "")
+        refinement_suggestion = body.get("refinement_suggestion", "")
+        
+        logger.info(f"[OLLAMA] Refining ZW with model: {model}")
+        
+        prompt = build_refinement_prompt(current_zw, refinement_suggestion)
+        
+        ollama_request = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.5,  # Lower temperature for refinement
+                "top_p": 0.8,
+                "num_predict": 2048
+            }
+        }
+        
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json=ollama_request,
+            timeout=120
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            refined_text = result.get("response", "").strip()
+            
+            logger.info(f"[OLLAMA] Refined to {len(refined_text)} characters")
+            
+            return JSONResponse(content={
+                "status": "success",
+                "refined_zw": refined_text,
+                "model_used": model,
+                "timestamp": str(datetime.datetime.now())
+            })
+        else:
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "status": "error",
+                    "message": f"Ollama refinement failed with status {response.status_code}",
+                    "refined_zw": current_zw,  # Return original on failure
+                    "timestamp": str(datetime.datetime.now())
+                }
+            )
+            
+    except Exception as e:
+        logger.error(f"[OLLAMA] Error during refinement: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": f"Error during ZW refinement: {str(e)}",
+                "refined_zw": current_zw,
+                "timestamp": str(datetime.datetime.now())
+            }
+        )
+
+@app.get("/")
+async def root():
+    """Root endpoint with system status"""
+    logger.info("[BOOT] EngAIn-ZW Daemon started on port 1111")
+    router_status = engine_router.get_router_status()
+    return JSONResponse(content={
+        "message": "Unified EngAIn-ZW Daemon active",
+        "router_status": router_status,
+        "timestamp": str(datetime.datetime.now())
+    })
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return JSONResponse(content={
+        "status": "healthy",
+        "engines": engine_router.get_router_status(),
+        "timestamp": str(datetime.datetime.now())
+    })
+
+# === SERVER STARTUP ===
+
+if __name__ == "__main__":
+    logger.info("🚀 Starting ZW Transformer Multi-Engine Daemon v2.0.0")
+    logger.info("📊 Architecture: Multi-Engine Router with Blender Adapter + Ollama AI")
+    logger.info("✅ Engine adapters initialized")
+    logger.info(f"📊 Available engines: {list(engine_router.adapters.keys())}")
+    
+    uvicorn.run("zw_transformer_daemon:app", host="127.0.0.1", port=1111, reload=True)

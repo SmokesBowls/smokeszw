@@ -143,3 +143,12 @@ export const parseZW = (zwString: string, options?: { delimiter?: string }): ZWN
   }
   return rootNode;
 };
+
+export function validateZWContent(content: string): boolean {
+  try {
+    const parsed = parseZW(content);
+    return parsed !== null;
+  } catch {
+    return false;
+  }
+}

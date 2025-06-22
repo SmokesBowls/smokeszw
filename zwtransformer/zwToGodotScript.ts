@@ -1,5 +1,5 @@
 
-import { ZWNode, ZWListItem } from './zwParser';
+import { ZWNode, ZWListItem, parseZW } from './zwParser';
 
 const escapeGdScriptString = (str: string): string => {
   // Escapes backslashes and double quotes for GDScript strings.
@@ -103,3 +103,12 @@ export const convertZwToGodot = (rootNode: ZWNode | null): string => {
   gdScriptString += "\n";
   return gdScriptString;
 };
+// Add this at the end of zwToGodotScript.ts
+export default function zwToGodotScript(zwContent: string): string {
+  try {
+    const parsed = parseZW(zwContent);
+    return convertZwToGodot(parsed);
+  } catch (error) {
+    return `// Error converting ZW to Godot: ${error}`;
+  }
+}

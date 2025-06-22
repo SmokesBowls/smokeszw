@@ -134,3 +134,8 @@ export const convertZwToJsonObject = (zwString: string): object | null => {
   console.error("ZW to JSON Error: Unexpected structure for parsed ZW root node's value.", rootValue);
   return null;
 };
+
+// Add this at the end of zwToJson.ts
+export default function zwToJson(zwContent: string): any {
+  return convertZwToJsonObject(zwContent);
+}
