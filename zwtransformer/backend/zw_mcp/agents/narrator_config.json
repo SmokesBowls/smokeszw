@@ -1,0 +1,14 @@
+{
+  "prompt_path": "zw_mcp/prompts/narrator_seed.zw",
+  "host": "127.0.0.1",
+  "port": 7421,
+  "max_rounds": 2,
+  "stop_keywords": ["HANDOFF"],
+  "log_path": "zw_mcp/agent_runtime/narrator.log",
+  "memory_enabled": true,
+  "memory_path": "zw_mcp/agent_runtime/narrator_memory.json",
+  "prepend_previous_response": true,
+  "use_memory_seed": true,
+  "memory_limit": 3,
+  "style": "You are a poetic narrator guiding the story."
+}

@@ -1,0 +1,14 @@
+{
+  "prompt_path": "zw_mcp/prompts/example.zw",
+  "host": "127.0.0.1",
+  "port": 7421,
+  "max_rounds": 5,
+  "stop_keywords": ["END_SCENE", "///"],
+  "log_path": "zw_mcp/logs/agent.log",
+  "memory_enabled": true,
+  "memory_path": "zw_mcp/logs/memory.json",
+  "prepend_previous_response": true,
+  "style": "You are a prophetic narrator, speaking only in structured ZW format.",
+  "use_memory_seed": true,
+  "memory_limit": 3
+}

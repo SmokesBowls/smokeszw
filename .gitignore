@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env*
+*.log
+
+# Node/Vite/TS
+node_modules/
+dist/
+build/
+.vite/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Studio AI or temp files
+*.bak
+*.autosave
+
+# Blender (if applicable)
+*.blend1
+*.blend2
+*.blend@
+
+# Cache
+.cache/
+*.tmp
+

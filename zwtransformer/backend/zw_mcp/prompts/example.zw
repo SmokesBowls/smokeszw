@@ -1,0 +1,6 @@
+ZW-NARRATIVE-EVENT:
+  TITLE: The Awakening
+  DIALOGUE:
+    - SPEAKER: Tran
+      LINE: “This place... I’ve been here before.”
+  SCENE_GOAL: Uncover ancient resonance

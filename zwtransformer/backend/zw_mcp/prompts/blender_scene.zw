@@ -1,0 +1,276 @@
+// Start of blender_scene.zw
+
+ZW-SCENE_SETUP:
+  BACKGROUND_COLOR: DarkBlue
+  LIGHTING: StandardStudio
+  ACTIVE_COLLECTION: SceneRoot
+///
+
+// --- Define materials that can be used by MATERIAL_OVERRIDE ---
+ZW-OBJECT: // Dummy object to define a material
+  TYPE: Cube
+  NAME: MaterialHolder_RedGlow
+  LOCATION: (-100, -100, -100) // Hidden away
+  MATERIAL: RedGlowMat
+  COLOR: "#FF0000"
+  BSDF:
+    EMISSION_STRENGTH: 5.0
+    EMISSION_COLOR: "#FF0000"
+  COLLECTION: MaterialDefinitions // Keep material definition objects separate
+///
+
+ZW-OBJECT: // Dummy object for another material
+  TYPE: Cube
+  NAME: MaterialHolder_BlueMatte
+  LOCATION: (-101, -100, -100)
+  MATERIAL: BlueMatteMat
+  COLOR: "#0000FF"
+  BSDF:
+    ROUGHNESS: 0.9
+  COLLECTION: MaterialDefinitions
+///
+
+// --- Define target object for these new tracks ---
+ZW-OBJECT:
+  TYPE: Sphere
+  NAME: StageFXSphere
+  LOCATION: (-12, 0, 1)
+  MATERIAL: BlueMatteMat // Initial material
+  COLLECTION: StagingFX
+///
+
+ZW-LIGHT:
+  NAME: StageFXLight
+  TYPE: POINT
+  LOCATION: (-12, 2, 3)
+  ENERGY: 500
+  COLOR: "#FFFFFF"
+  COLLECTION: StagingFX
+///
+
+// --- ZW-STAGE block demonstrating new track types (Phase 8.1) ---
+ZW-STAGE:
+  NAME: "AdvancedSceneEvents"
+  TRACKS:
+    // 1. PROPERTY_ANIM example: Animate light energy
+    - TYPE: PROPERTY_ANIM
+      TARGET: "StageFXLight"
+      PROPERTY_PATH: "data.energy"
+      INTERPOLATION: BEZIER
+      KEYFRAMES:
+        - FRAME: 1
+          VALUE: 100.0
+        - FRAME: 50
+          VALUE: 1000.0
+        - FRAME: 100
+          VALUE: 100.0
+
+    // 2. MATERIAL_OVERRIDE example
+    - TYPE: MATERIAL_OVERRIDE
+      TARGET: "StageFXSphere"
+      MATERIAL_NAME: "RedGlowMat"
+      START_FRAME: 20
+      END_FRAME: 80                   // Frame at which original material is restored
+      RESTORE_ON_END: "true"
+
+    // 3. SHADER_SWITCH example: Change roughness on the original material
+    - TYPE: SHADER_SWITCH
+      TARGET: "StageFXSphere"
+      MATERIAL_NAME: "BlueMatteMat"
+      TARGET_NODE: "Principled BSDF"
+      INPUT_NAME: "Roughness"
+      NEW_VALUE: 0.1
+      FRAME: 40
+
+    // Example of SHADER_SWITCH for a color input
+    - TYPE: SHADER_SWITCH
+      TARGET: "StageFXSphere"
+      MATERIAL_NAME: "BlueMatteMat"
+      TARGET_NODE: "Principled BSDF"
+      INPUT_NAME: "Base Color"
+      NEW_VALUE: "(1.0, 0.0, 0.0, 1.0)"
+      FRAME: 60
+///
+
+// --- Existing Content (for context and regression testing, slightly adjusted locations) ---
+
+ZW-OBJECT:
+  TYPE: Cube
+  NAME: CentralAltar // Target for camera tracking
+  LOCATION: (0,0,1)
+  SCALE: (1,1,0.2)
+  MATERIAL: StoneAltar
+  COLOR: "(0.4,0.4,0.45,1)"
+  COLLECTION: Scenery
+///
+ZW-CAMERA:
+  NAME: MainShotCam
+  LOCATION: (0, -8, 3)
+  ROTATION: "(70, 0, 0)"
+  FOV: 50
+  CLIP_START: 0.1
+  CLIP_END: 200.0
+  TRACK_TARGET: CentralAltar
+  COLLECTION: CamerasAndLights
+///
+
+ZW-OBJECT:
+  TYPE: Cube
+  NAME: AnimCube_ZRotate_Linear
+  LOCATION: (-10, 5, 1) // Adjusted Y
+  MATERIAL: AnimMat_Rotation
+  COLOR: "#B0E0E6"
+  COLLECTION: AnimationSuite_Tests
+///
+ZW-ANIMATION:
+  NAME: Spin_AnimCube_Z_Linear
+  TARGET_OBJECT: AnimCube_ZRotate_Linear
+  PROPERTY_PATH: "rotation_euler"
+  INDEX: 2
+  UNIT: degrees
+  INTERPOLATION: LINEAR
+  KEYFRAMES:
+    - FRAME: 1
+      VALUE: 0
+    - FRAME: 50
+      VALUE: 180
+    - FRAME: 100
+      VALUE: 360
+///
+
+NOTE: This scene now includes ZW-STAGE tracks for PROPERTY_ANIM, MATERIAL_OVERRIDE, and SHADER_SWITCH, alongside other features.
+///
+
+// --- Test Case for ZW-MESH (Phase 8.5) ---
+ZW-MESH:
+  NAME: Spirit_Tree_Test
+  TYPE: ico_sphere // This should be interpreted as the base primitive by zw_mesh.create_base_mesh
+  PARAMS:
+    SUBDIVISIONS: 3
+    RADIUS: 1.5
+  DEFORMATIONS:
+    - TYPE: twist
+      AXIS: Z
+      ANGLE: 60 // Assumed to be degrees, zw_mesh.py's apply_deformations handles math.radians()
+    - TYPE: displace
+      TEXTURE: noise // zw_mesh.py's add_displace_deform handles this, might map to 'CLOUDS' or similar
+      STRENGTH: 0.4
+  MATERIAL:
+    NAME: SpiritGlowMaterial // Explicit material name
+    BASE_COLOR: "#7FFFD4"    // Aquamarine
+    EMISSION: 1.2            // Emission strength
+    EMISSION_COLOR: "#9FFFFF" // Pale cyan/turquoise for emission
+  LOCATION: (0.0, 0.0, 0.0)
+  ROTATION: "(0.0, 0.0, 0.0)" // Using string tuple for consistency with how adapter might handle it
+  SCALE: "(1.0, 1.0, 1.0)"  // Using string tuple
+///
+
+// --- Test Case for ZW-MESH with Texture and Export (Phase 8.6) ---
+ZW-MESH:
+  NAME: Crystalline_Stone
+  TYPE: cylinder // Base primitive. zw_mesh.py create_base_mesh should handle this.
+  PARAMS:
+    VERTICES: 12
+    RADIUS: 0.8
+    DEPTH: 2.5
+  DEFORMATIONS:
+    - TYPE: displace
+      TEXTURE: noise // This will be handled by add_displace_deform, mapping "noise" to a Blender texture.
+      STRENGTH: 0.2
+  MATERIAL:
+    NAME: StoneMat          // Explicit name for the material
+    BASE_COLOR: "#CCCCCC"   // Light gray
+    EMISSION: 0.1           // Slight emission
+    TEXTURE:                // Texture definition block
+      TYPE: image
+      FILE: "assets/textures/stone_diffuse.png" // Path relative to project root
+      MAPPING: UV           // Indicates UV unwrapping is needed
+      SCALE: "(1.5, 1.5)"   // UV scale as a string tuple
+  LOCATION: "(2.0, 0.0, 1.25)" // Adjusted Z location assuming depth creates height from origin
+  ROTATION: "(0,0,0)"         // Default rotation
+  SCALE: "(1,1,1)"            // Default scale
+  COLLECTION: ProceduralAssets // Assign to a collection
+  EXPORT:                     // Export definition block
+    FORMAT: glb
+    FILE: "exports/crystalline_stone.glb" // Path relative to project root
+///
+
+// --- ZW-MESH Definitions for ZW-COMPOSE Test (Phase 9.0) ---
+
+ZW-MESH:
+  NAME: Base_Shrine
+  TYPE: cylinder // Base primitive for ZW-MESH
+  PARAMS:
+    VERTICES: 24
+    RADIUS: 2.0
+    DEPTH: 0.6
+  MATERIAL:
+    NAME: ShrineStoneMat // Explicit material name
+    BASE_COLOR: "#8B8B8B" // DarkGray
+    EMISSION: 0.05        // Slight emission
+  LOCATION: "(0.0, 0.0, 0.0)" // Set base location if needed, or compose will place it
+  COLLECTION: ShrineParts
+///
+
+ZW-MESH:
+  NAME: Crystal_Top
+  TYPE: ico_sphere // Base primitive
+  PARAMS:
+    SUBDIVISIONS: 2
+    RADIUS: 0.5
+  MATERIAL:
+    NAME: CrystalMat
+    BASE_COLOR: "#A3FFD3" // Aquamarine
+    EMISSION: 1.2
+    // Example of BSDF params that apply_material in zw_mesh.py might handle
+    // For now, only BASE_COLOR and EMISSION (+ EMISSION_COLOR) are explicitly handled by user's zw_mesh.py
+    // BSDF:
+    //   ROUGHNESS: 0.1
+    //   TRANSMISSION: 0.9
+  LOCATION: "(0.0, 0.0, 0.0)" // Initial local position, will be overridden by ZW-COMPOSE attachment
+  COLLECTION: ShrineParts
+///
+
+ZW-MESH:
+  NAME: Side_Shard
+  TYPE: cone // Base primitive
+  PARAMS:
+    VERTICES: 8     // Fewer vertices for a shard
+    RADIUS1: 0.15   // Wider base
+    RADIUS2: 0.0    // Pointy top
+    DEPTH: 0.7
+  MATERIAL:
+    NAME: ShardMat
+    BASE_COLOR: "#00FFFF" // Cyan
+    EMISSION: 0.7
+  LOCATION: "(0.0, 0.0, 0.0)" // Initial local position
+  COLLECTION: ShrineParts
+///
+
+// --- ZW-COMPOSE Test Case (Phase 9.0) ---
+ZW-COMPOSE:
+  NAME: CrystalShrine_Assembly // Name for the parent Empty of the assembly
+  BASE_MODEL: Base_Shrine     // References NAME of a ZW-MESH or ZW-OBJECT
+  LOCATION: "(0, 15, 0)"      // Location for the entire assembly's parent Empty
+  ROTATION: "(0,0,15)"        // Rotation for the entire assembly's parent Empty (degrees)
+  COLLECTION: ComposedScenes   // Collection for the parent Empty
+  ATTACHMENTS:
+    - OBJECT: Crystal_Top      // References NAME of a ZW-MESH or ZW-OBJECT
+      LOCATION: "(0.0, 0.0, 0.5)" // Local offset from Base_Shrine origin (or parent Empty)
+      ROTATION: "(0.0, 0.0, 0.0)" // Local rotation
+      SCALE: "(1.0, 1.0, 1.0)"    // Local scale
+      // No MATERIAL_OVERRIDE, so it uses its own CrystalMat
+
+    - OBJECT: Side_Shard
+      LOCATION: "(1.2, 0.0, 0.3)"  // Local offset
+      ROTATION: "(0.0, 90, 10)"   // Local rotation (degrees)
+      SCALE: "(0.8, 0.8, 1.0)"     // Local scale
+      MATERIAL_OVERRIDE:          // Override Side_Shard's material for this instance
+        NAME: OverriddenShardMat
+        BASE_COLOR: "#FF66CC"     // Pinkish override
+        EMISSION: 1.5
+        // BSDF: { ROUGHNESS: 0.05 } // Example if MATERIAL_OVERRIDE supported full BSDF
+  EXPORT: // Optional export for the assembled object
+    FORMAT: glb
+    FILE: "exports/crystal_shrine_assembly.glb"
+///

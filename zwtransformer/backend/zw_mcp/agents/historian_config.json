@@ -1,0 +1,14 @@
+{
+  "prompt_path": "zw_mcp/prompts/historian_seed.zw",
+  "host": "127.0.0.1",
+  "port": 7421,
+  "max_rounds": 2,
+  "stop_keywords": ["HANDOFF"],
+  "log_path": "zw_mcp/agent_runtime/historian.log",
+  "memory_enabled": true,
+  "memory_path": "zw_mcp/agent_runtime/historian_memory.json",
+  "prepend_previous_response": true,
+  "use_memory_seed": true,
+  "memory_limit": 3,
+  "style": "You are a factual historian. Speak only in structured ZW."
+}

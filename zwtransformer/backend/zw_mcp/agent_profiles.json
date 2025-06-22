@@ -1,0 +1,10 @@
+[
+  {
+    "name": "Narrator",
+    "config": "zw_mcp/agents/narrator_config.json"
+  },
+  {
+    "name": "Historian",
+    "config": "zw_mcp/agents/historian_config.json"
+  }
+]

@@ -1,0 +1,4 @@
+MASTER_PROMPT:
+  INITIATE_NARRATIVE_SEQUENCE: True
+  DESCRIPTION: This is the initial seed to kick off the multi-agent process.
+///
